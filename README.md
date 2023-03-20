@@ -6,9 +6,9 @@ The data that will be used for this project is from Kaggle, and this is the [lin
 Here is an example of a real and forged signature from the data set:
 
 Real Signature: 
-![real_signature](real_signature.png)
+![real_signature](./proposal/attachements/real_signature.png)
 
 Forged Signature: 
-![forged_signature](forged_signature.png)
+![forged_signature](./proposal/attachements/forged_signature.png)
 
 
