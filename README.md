@@ -9,9 +9,9 @@ The data that will be used for this project is from Kaggle, and this is the [lin
 Here is an example of a real and forged signature from the data set:
 
 Real Signature: 
-![real_signature](./proposal/attachements/real_signature.png)
+![real_signature](https://github.com/SJHageman/udacity-mle-capstone/blob/main/proposal/attachments/real_signature.png)
 
 Forged Signature: 
-![forged_signature](./proposal/attachements/forged_signature.png)
+![forged_signature](https://github.com/SJHageman/udacity-mle-capstone/blob/main/proposal/attachments/forged_signature.png)
 
 
