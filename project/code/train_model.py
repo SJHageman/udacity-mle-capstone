@@ -22,8 +22,21 @@ from typing import Tuple
 
 import pandas as pd
 
+class ContrastiveLoss(torch.nn.Module):
+    """
+    Contrastive loss function.
+    Based on: http://yann.lecun.com/exdb/publis/pdf/hadsell-chopra-lecun-06.pdf
+    """
+    def __init__(self, margin=1.0):
+        super(ContrastiveLoss, self).__init__()
+        self.margin = margin
 
-def preprocess_signature(img: np.ndarray,
+    def forward(self, output1, output2, label):
+        euclidean_distance = F.cosine_similarity(F.normalize(output1), F.normalize(output2))
+        loss_contrastive = torch.mean((1-label) * torch.pow(euclidean_distance, 2) + (label) * torch.pow(torch.clamp(self.margin - euclidean_distance, min=0.0), 2))
+        return loss_contrastive
+
+def preprocess_image(img: np.ndarray,
                          canvas_size: Tuple[int, int],
                          img_size: Tuple[int, int] =(170, 242),
                          input_size: Tuple[int, int] =(150, 220)) -> np.ndarray:
@@ -38,7 +51,6 @@ def preprocess_signature(img: np.ndarray,
         cropped = resized
 
     return cropped
-
 
 def normalize_image(img: np.ndarray,
                     canvas_size: Tuple[int, int] = (840, 1360)) -> np.ndarray:
@@ -115,19 +127,6 @@ def normalize_image(img: np.ndarray,
     return normalized_image
 
 
-def remove_background(img: np.ndarray) -> np.ndarray:
-
-        img = img.astype(np.uint8)
-        # Binarize the image using OTSU's algorithm. This is used to find the center
-        # of mass of the image, and find the threshold to remove background noise
-        threshold = filters.threshold_otsu(img)
-
-        # Remove noise - anything higher than the threshold. Note that the image is still grayscale
-        img[img > threshold] = 255
-
-        return img
-
-
 def resize_image(img: np.ndarray,
                  size: Tuple[int, int]) -> np.ndarray:
     height, width = size
@@ -166,35 +165,17 @@ def crop_center(img: np.ndarray,
     cropped = img[start_y: start_y + size[0], start_x:start_x + size[1]]
     return cropped
 
-
-def crop_center_multiple(imgs: np.ndarray,
-                         size: Tuple[int, int]) -> np.ndarray:
-    img_shape = imgs.shape[2:]
-    start_y = (img_shape[0] - size[0]) // 2
-    start_x = (img_shape[1] - size[1]) // 2
-    cropped = imgs[:, :, start_y: start_y + size[0], start_x:start_x + size[1]]
-    return cropped
-
-def load_signature(path):
+def load_image(path):
     return img_as_ubyte(imread(path, as_gray=True))
 
 
 class SiameseNetwork(nn.Module):
     def __init__(self):
         super(SiameseNetwork, self).__init__()
-        # get resnet model
         self.resnet = torchvision.models.resnet18()
-
-        # over-write the first conv layer to be able to read MNIST images
-        # as resnet18 reads (3,x,x) where 3 is RGB channels
-        # whereas MNIST has (1,x,x) where 1 is a gray-scale channel
         self.resnet.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
         self.fc_in_features = self.resnet.fc.in_features
-        
-        # remove the last layer of resnet18 (linear layer which is before avgpool layer)
         self.resnet = torch.nn.Sequential(*(list(self.resnet.children())[:-1]))
-
-        # add linear layers to compare between the features of the two images
         self.fc = nn.Sequential(
             nn.Linear(self.fc_in_features * 2, 256),
             nn.ReLU(inplace=True),
@@ -202,8 +183,6 @@ class SiameseNetwork(nn.Module):
         )
 
         self.sigmoid = nn.Sigmoid()
-
-        # initialize the weights
         self.resnet.apply(self.init_weights)
         self.fc.apply(self.init_weights)
         
@@ -220,19 +199,13 @@ class SiameseNetwork(nn.Module):
     def forward(self, input1, input2):
         input1 = input1.view(-1, 1, 150, 220).float().div(255)
         input2 = input2.view(-1, 1, 150, 220).float().div(255)
-        # get two images' features
+
         output1 = self.forward_once(input1)
         output2 = self.forward_once(input2)
 
-        # concatenate both images' features
         output = torch.cat((output1, output2), 1)
-
-        # pass the concatenation to the linear layers
         output = self.fc(output)
-
-        # pass the out of the linear layers to sigmoid layer
         output = self.sigmoid(output)
-        
         return output
 
 class SignatureDataset(Dataset):
@@ -256,21 +229,19 @@ class SignatureDataset(Dataset):
         real_file_path = self.real_file_names[index]
         forged_file_path = self.forged_file_names[index]
         
-        img1 = load_signature(real_file_path)
-        img2 = load_signature(forged_file_path)
+        img1 = load_image(real_file_path)
+        img2 = load_image(forged_file_path)
         
-        img1 = preprocess_signature(img1, self.canvas_size, self.dim)
-        img2 = preprocess_signature(img2, self.canvas_size, self.dim)
+        img1 = preprocess_image(img1, self.canvas_size, self.dim)
+        img2 = preprocess_image(img2, self.canvas_size, self.dim)
         
         label = torch.tensor(self.labels[index], dtype=torch.long)
         
         return torch.tensor(img1), torch.tensor(img2), label.float()
     
     
-def train(args, model, device, train_loader, optimizer, epoch):
+def train(args, model, device, train_loader, optimizer, epoch, criterion):
     model.train()
-    criterion = nn.BCELoss()
-
     for batch_idx, (images_1, images_2, targets) in enumerate(train_loader):
         images_1, images_2, targets = images_1.to(device), images_2.to(device), targets.to(device)
         optimizer.zero_grad()
@@ -282,18 +253,12 @@ def train(args, model, device, train_loader, optimizer, epoch):
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(images_1), len(train_loader.dataset),
                 100. * batch_idx / len(train_loader), loss.item()))
-            if args.dry_run:
-                break
 
 
-def test(model, device, test_loader):
+def test(model, device, test_loader, criterion):
     model.eval()
     test_loss = 0
     correct = 0
-
-    # we aren't using `TripletLoss` as the MNIST dataset is simple, so `BCELoss` can do the trick.
-    criterion = nn.BCELoss()
-
     with torch.no_grad():
         for (images_1, images_2, targets) in test_loader:
             images_1, images_2, targets = images_1.to(device), images_2.to(device), targets.to(device)
@@ -304,49 +269,47 @@ def test(model, device, test_loader):
 
     test_loss /= len(test_loader.dataset)
 
-    # for the 1st epoch, the average loss is 0.0001 and the accuracy 97-98%
-    # using default settings. After completing the 10th epoch, the average
-    # loss is 0.0000 and the accuracy 99.5-100% using default settings.
     print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
         test_loss, correct, len(test_loader.dataset),
         100. * correct / len(test_loader.dataset)))
 
 
 def main():
-    # Training settings
     parser = argparse.ArgumentParser(description='PyTorch Siamese network Example')
-    parser.add_argument('--batch-size', type=int, default=64, metavar='N',
+    parser.add_argument('--train-batch-size', 
+                        type=int, default=64, metavar='N',
                         help='input batch size for training (default: 64)')
-    parser.add_argument('--test-batch-size', type=int, default=1000, metavar='N',
+    parser.add_argument('--test-batch-size', 
+                        type=int, default=1000, metavar='N',
                         help='input batch size for testing (default: 1000)')
-    parser.add_argument('--epochs', type=int, default=1, metavar='N',
-                        help='number of epochs to train (default: 14)')
-    parser.add_argument('--lr', type=float, default=1.0, metavar='LR',
+    parser.add_argument('--epochs', type=int, 
+                        default=1, metavar='N',
+                        help='number of epochs to train (default: 1)')
+    parser.add_argument('--lr', type=float, 
+                        default=1.0, metavar='LR',
                         help='learning rate (default: 1.0)')
-    parser.add_argument('--gamma', type=float, default=0.7, metavar='M',
+    parser.add_argument('--gamma', type=float, 
+                        default=0.7, metavar='M',
                         help='Learning rate step gamma (default: 0.7)')
-    parser.add_argument('--no-cuda', action='store_true', default=False,
-                        help='disables CUDA training')
-    parser.add_argument('--dry-run', action='store_true', default=False,
-                        help='quickly check a single pass')
     parser.add_argument('--seed', type=int, default=1, metavar='S',
                         help='random seed (default: 1)')
     parser.add_argument('--log-interval', type=int, default=10, metavar='N',
                         help='how many batches to wait before logging training status')
+    parser.add_argument('--lossfunc', type=int, default='BCELoss', metavar='S',
+                        help='loss function to use, either BCELoss or Contrastive (default: BCELoss)')
     args = parser.parse_args()
-    
-    use_cuda = not args.no_cuda and torch.cuda.is_available()
 
     torch.manual_seed(args.seed)
 
-    if use_cuda:
+    if torch.cuda.is_available():
         device = torch.device("cuda")
     else:
         device = torch.device("cpu")
 
-    train_kwargs = {'batch_size': args.batch_size}
+    train_kwargs = {'batch_size': args.train_batch_size}
     test_kwargs = {'batch_size': args.test_batch_size}
-    if use_cuda:
+    
+    if torch.cuda.is_available():
         cuda_kwargs = {'num_workers': 1,
                        'pin_memory': True,
                        'shuffle': True}
@@ -360,11 +323,13 @@ def main():
 
     model = SiameseNetwork().to(device)
     optimizer = optim.Adadelta(model.parameters(), lr=args.lr)
+    
+    criterion = nn.BCELoss()
 
     scheduler = StepLR(optimizer, step_size=1, gamma=args.gamma)
     for epoch in range(1, args.epochs + 1):
-        train(args, model, device, train_loader, optimizer, epoch)
-        test(model, device, test_loader)
+        train(args, model, device, train_loader, optimizer, epoch, criterion)
+        test(model, device, test_loader, criterion)
         scheduler.step()
 
     torch.save(model.state_dict(), "/opt/ml/model/siamese_network.pt")
