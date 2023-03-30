@@ -39,6 +39,10 @@ def preprocess_image(image, radius=2, resize_dims = (50,70)):
     return image_background_removed
 
 class SiameseNetwork(nn.Module):
+    """
+        modified version of an official pytorch example Siamese nn model using resnet18
+        https://github.com/pytorch/examples/blob/main/siamese_network/main.py
+    """
     def __init__(self):
         super(SiameseNetwork, self).__init__()
         self.resnet = torchvision.models.resnet18()
@@ -78,7 +82,7 @@ class SignatureDataset(Dataset):
         df = pd.read_csv(f'/opt/ml/input/data/meta/{category}_data.csv', header=0, names=['img_path_real', 'img_path_forged', 'label'])
         df['img_path_real'] = df['img_path_real'].apply(lambda x : f'/opt/ml/input/data/{category}/{x}')
         df['img_path_forged'] = df['img_path_forged'].apply(lambda x : f'/opt/ml/input/data/{category}/{x}')
-        self.df  = df.sample(frac=0.025)
+        self.df  = df.sample(frac=0.1)
         self.real_fnames = self.df["img_path_real"].values
         self.forged_fnames = self.df["img_path_forged"].values
         self.labels = self.df["label"].values
@@ -97,6 +101,10 @@ class SignatureDataset(Dataset):
     
     
 def train(args, model, device, train_loader, optimizer, epoch, criterion):
+    """
+        modified version of an official pytorch example Siamese nn model using resnet18
+        https://github.com/pytorch/examples/blob/main/siamese_network/main.py
+    """
     model.train()
     for i, (images_1, images_2, targets) in enumerate(train_loader):
         images_1, images_2, targets = images_1.to(device), images_2.to(device), targets.to(device)
@@ -110,6 +118,10 @@ def train(args, model, device, train_loader, optimizer, epoch, criterion):
 
 
 def test(model, device, test_loader, criterion):
+    """
+        modified version of an official pytorch example Siamese nn model using resnet18
+        https://github.com/pytorch/examples/blob/main/siamese_network/main.py
+    """
     model.eval()
     test_loss = 0
     correct = 0

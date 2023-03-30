@@ -25,17 +25,22 @@ import pandas as pd
 
 from sagemaker_inference import decoder
 
-def preprocess_image(image, radius=2, resize_dims = (150,220)):
+def preprocess_image(image, radius=2, resize_dims = (50,70)):
     image = image.astype(np.uint8)
     blurred_image = filters.gaussian(image, radius, preserve_range=True)
     threshold = filters.threshold_otsu(blurred_image)
     binarized_image = blurred_image > threshold
     image_background_removed = np.where(binarized_image==False, 255-image, 0)
     image_background_removed = transform.resize(image_background_removed, resize_dims, mode='constant', anti_aliasing=True, preserve_range=True)
-    image_background_removed = image_background_removed/255.0
+    image_background_removed = image_background_removed /255.0
+    image_background_removed = np.pad(image_background_removed, (20, 20), 'constant', constant_values=(0,0))
     return image_background_removed
 
 class SiameseNetwork(nn.Module):
+    """
+        modified version of an official pytorch example Siamese nn model using resnet18
+        https://github.com/pytorch/examples/blob/main/siamese_network/main.py
+    """
     def __init__(self):
         super(SiameseNetwork, self).__init__()
         self.resnet = torchvision.models.resnet18()
@@ -43,10 +48,9 @@ class SiameseNetwork(nn.Module):
         self.fc_in_features = self.resnet.fc.in_features
         self.resnet = torch.nn.Sequential(*(list(self.resnet.children())[:-1]))
         self.fc = nn.Sequential(
-            nn.Linear(self.fc_in_features*2, 256),
+            nn.Linear(2*self.fc_in_features, 256),
             nn.ReLU(inplace=True),
-            nn.Linear(256, 1),
-        )
+            nn.Linear(256, 1))
         self.sigmoid = nn.Sigmoid()
         self.resnet.apply(self.init_weights)
         self.fc.apply(self.init_weights)
@@ -62,8 +66,8 @@ class SiameseNetwork(nn.Module):
         return output
 
     def forward(self, input1, input2):
-        input1 = input1.view(-1, 1, 150, 220).float()
-        input2 = input2.view(-1, 1, 150, 220).float()
+        input1 = input1.view(-1, 1, 90, 110).float()
+        input2 = input2.view(-1, 1, 90, 110).float()
         output1 = self.forward_once(input1)
         output2 = self.forward_once(input2)
         output = torch.cat((output1, output2), 1)
